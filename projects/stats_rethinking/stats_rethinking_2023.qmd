@@ -1,0 +1,215 @@
+---
+title: "Stats Rethinking"
+author: "Coralie Williams"
+execute:
+  echo: false
+format:
+  html:
+    toc: true
+    toc-location: body 
+    code-fold: true
+    code-summary: "Show the code"
+editor: visual
+---
+
+[\[Statistical Rethinking 2nd edition book pdf\]](https://github.com/Booleans/statistical-rethinking/blob/master/Statistical%20Rethinking%202nd%20Edition.pdf)
+
+```{r include=F}
+knitr::opts_chunk$set(message = FALSE)
+```
+
+DAG mermaid diagrams testing
+
+```{r}
+library(DiagrammeR)
+mermaid("
+graph LR
+    A-->B
+")
+```
+
+------------------------------------------------------------------------
+
+## Chapter 14: Adventures in Covariance
+
+### Example datasets
+
+-   Cafe wait time
+
+-   Prosocial chimpanzee experiment
+
+-   Dyad household gifts ([Koster & Leckie, 2014](https://doi.org/10.1016/j.socnet.2014.02.002))
+
+-   Oceanic tools
+
+-   Primate phylogenetic analysis
+
+------------------------------------------------------------------------
+
+### 1. Varying slopes by construction
+
+```{r}
+library(brms)
+library(dplyr)
+library(tidyverse)
+
+
+#### Simulate the population
+a       <-  3.5  # average morning wait time
+b       <- -1    # average difference afternoon wait time
+sigma_a <-  1    # std dev in intercepts
+sigma_b <-  0.5  # std dev in slopes
+rho     <- -.7   # correlation between intercepts and slopes
+
+# the next three lines of code simply combine the terms, above
+mu     <- c(a, b)
+
+cov_ab <- sigma_a * sigma_b * rho
+sigma  <- matrix(c(sigma_a^2, cov_ab, 
+                   cov_ab, sigma_b^2), ncol = 2)
+
+
+sigmas <- c(sigma_a, sigma_b)          # standard deviations
+rho    <- matrix(c(1, rho,             # correlation matrix
+                   rho, 1), nrow = 2)
+
+# now matrix multiply to get covariance matrix
+sigma <- diag(sigmas) %*% rho %*% diag(sigmas)
+
+# how many cafes would you like?
+n_cafes <- 20
+
+set.seed(5)  # used to replicate example
+
+vary_effects <- 
+  MASS::mvrnorm(n_cafes, mu, sigma) %>% 
+  data.frame() %>% 
+  set_names("a_cafe", "b_cafe")
+
+
+#### Simulate observations 
+n_visits <- 10
+sigma    <-  0.5  # std dev within cafes
+
+set.seed(22)  # used to replicate example
+
+d <-
+  vary_effects %>% 
+  mutate(cafe = 1:n_cafes) %>% 
+  expand_grid(visit = 1:n_visits) %>% 
+  mutate(afternoon = rep(0:1, times = n() / 2)) %>% 
+  mutate(mu = a_cafe + b_cafe * afternoon) %>% 
+  mutate(wait = rnorm(n = n(), mean = mu, sd = sigma)) %>% 
+  select(cafe, everything())
+
+
+#### View dataset
+d %>%
+  mutate(afternoon = ifelse(afternoon == 0, "M", "A"),
+         day       = rep(rep(1:5, each = 2), times = n_cafes)) %>%
+  filter(cafe %in% c(3, 5)) %>%
+  mutate(cafe = str_c("café #", cafe)) %>% 
+  
+  ggplot(aes(x = visit, y = wait, group = day)) +
+  geom_point(aes(color = afternoon), size = 2) +
+  geom_line(color = "#8B9DAF") +
+  scale_color_manual(values = c("#80A0C7", "#EEDA9D")) +
+  scale_x_continuous(NULL, breaks = 1:10, labels = rep(c("M", "A"), times = 5)) +
+  scale_y_continuous("wait time in minutes", limits = c(0, NA)) +
+  theme_pearl_earring(axis.ticks.x = element_blank(),
+                      legend.position = "none") +
+  facet_wrap(~ cafe, ncol = 1)
+```
+
+------------------------------------------------------------------------
+
+### 2. Advanced varying slopes: Household dyads dataset
+
+Prosocial chimpanzee experiment
+
+```{r}
+# Load chimpanzees prosocial experiement data
+data(chimpanzees, package = "rethinking")
+d <- chimpanzees
+rm(chimpanzees)
+
+# wrangle
+d <-
+  d %>% 
+  mutate(actor     = factor(actor),
+         block     = factor(block),
+         treatment = factor(1 + prosoc_left + 2 * condition),
+         # this will come in handy, later
+         labels    = factor(treatment,
+                            levels = 1:4,
+                            labels = c("r/n", "l/n", "r/p", "l/p")))
+
+glimpse(d)
+```
+
+------------------------------------------------------------------------
+
+### 3. Instruments and causal design
+
+/
+
+------------------------------------------------------------------------
+
+### 4. Social relations as correlated varying effects
+
+Household dyads:
+
+-   25 households
+
+-   300 dyads (social networks)
+
+-   600 gifts observations
+
+```{r}
+# Load librairies
+library(rethinking)
+
+# Load dataset of household dyads
+data(KosterLeckie)
+```
+
+"The variables `hidA` and `hidB` tell us the household IDs in each dyad, and `did` is a unique dyad ID number" (p. 462). To get a sense of the interrelation among those three ID variables, we'll make a tile plot.
+
+**Simple model**
+
+```{r}
+# Load librairies
+library(rethinking)
+library(brms)
+
+# Fit simple brm model: discussed during stats book club
+model.dyad.brm <- brm(giftsAB ~ 1 + (1|hidA) + (1|hidB) + (1|did), data=kl_dyads)
+
+```
+
+**Multi-predictor model**
+
+Fit model in brms
+
+```{r}
+
+
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+Notes:
+
+-   brms is not set up to allow covariances among distinct random effects with the same levels: https://github.com/ASKurz/Statistical_Rethinking_with_brms_ggplot2_and_the_tidyverse_2\_ed/issues/6
+
+### 5. Continuous categories and the Gaussian process
+
+There is a way to apply the varying effects approach to continuous categories... The general approach is known as **Gaussian process regression**. This name is unfortunately wholly uninformative about what it is for and how it works.
+
+> Gaussian process models constitute a class of probabilistic statistical models in which a Gaussian Process (GP) is used to described the Bayesian "a prior" uncertainty about a latent function.
+
+#### 
+
+Resources/Links for Gaussian Processes:
+
+https://katbailey.github.io/post/gaussian-processes-for-dummies/

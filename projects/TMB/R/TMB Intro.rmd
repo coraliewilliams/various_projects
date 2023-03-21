@@ -1,0 +1,333 @@
+---
+title: "TMB Introduction Tutorial"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Template Model Builder (TMB)
+
+TMB is an R package that enables users to flexibly fit latent variable models to data. The user writes the likelihood (or any objective) function in a C++ template file which R can compile and calculate first and second order derivatives using automatic differentiation. It does this by utilising C++ packages CppAD and Eigen and by all accounts is very fast. Use of TMB requires only limited knowledge of the C++ language.
+
+Specific to latent variable models, there is also functionality to denote parameters within the objective function as random so to be integrated out to provide a marginal likelihood. For more details on using TMB, including examples and sample code, see [**https://github.com/kaskr/adcomp/wiki**](https://github.com/kaskr/adcomp/wiki){.uri}**.**
+
+As an easy step into the use of TMB, we will reproduce a simple linear model as fit using lm() in R. First simulate some data:
+
+## Example 1 - lm()
+
+```{r}
+# the true beta values
+true.beta <- c(5, 1.5, -3)
+
+# a design matrix (intercept and 2 covariates)
+X <- cbind(Int = rep(1, 100), X1 = rnorm(100), X2 = rnorm(100, mean = 2))
+
+# create the response with residuals
+Y <- (X %*% true.beta) + rnorm(100)
+
+# results of the linear model
+lm(Y ~ X - 1)
+```
+
+Now we will perform the same fit using a C++ template file.
+
+### C++ template file
+
+Using any text editor we can create the template by saving with the extension '.cpp'. All templates created will require at least the following code wrapper:
+
+```{r engine = 'Rcpp', eval = FALSE}
+// OBJECTIVE FUNCTION TEMPLATE
+#include <TMB.hpp>
+
+template<class Type>
+Type objective_function<Type>::operator() ()
+{
+
+  // THIS IS WHERE YOU MAIN CODE WILL GO
+
+}
+```
+
+The line: `#include <TMB.hpp>` links the TMB libraries while the rest declares our template as an objective function - variable/object declaration is something that must be done a little more rigidly than in R. It should also be noted here that in C++ we comment with `//`. We can now look at the internal elements of the template through the example of the linear model above.
+
+```{r engine = 'Rcpp', eval = FALSE}
+// Simple Linear Model
+#include <TMB.hpp>
+
+template<class Type>
+Type objective_function<Type>::operator() ()
+{
+  // The data to be input
+  DATA_VECTOR(Y);	   // Response vector
+  DATA_MATRIX(X);	   // Design matrix
+
+  // The model parameters
+  PARAMETER_VECTOR(Beta);  // Vector of our 3 beta values
+  PARAMETER(logsig);       // natural log of the residual sd
+  Type nll;
+  nll = -sum(dnorm(Y, X*Beta, exp(logsig), true));
+  // dnorm provides the gaussian pdf similar to R syntax
+  // true is a logical that returns log of the density
+
+  return nll;
+
+}
+```
+
+### Declare the data and parameters of the model
+
+We first define the data that will be provided to the function - these can be matrices (e.g. `DATA_MATRIX`, `DATA_SPARSE_MATRIX`), vectors (e.g. `DATA_VECTOR`), arrays (`DATA_ARRAY`) or scalars (`DATA_SCALAR`). These can also be restricted to be integers (e.g. `DATA_IVECTOR`) or a factor (`DATA_FACTOR`). See a full list of macros [**here**](http://kaskr.github.io/adcomp/group__macros.html). Note here that we require the line terminate operator `;` after each operation in C++.
+
+Similarly, we must define the parameters of the function - it will be with respect to these that the automatic differentiation is performed. In the above example we have our $\boldsymbol\beta$ (intercept and covariate coefficients) as well as the residual standard deviation, $\sigma$, in the above called `PARAMETER(logsig)`. Since we require that $\sigma > 0$, we pass it to the objective function transformed by the natural logarithm. This means that when we use an optimiser in R we have no need to include constraints on particular parameters.
+
+### Write the objective function
+
+The next part of the template describes the likelihood (objective) function. First we simply define the object `nll` (negative log-likelihood) to be of a type defined by it's initialisation, i.e. `Type` (though this is not the only way to do this as we will see later). The next line computes the function. TMB uses density functions in the style of R so that `dnorm(quantile_data, mean, sd)` decries the normal pdf. The last argument `true` simply returns the log transform. We also take the negative of this value as our optimisation algorithms in R will default to minimisation (whereas we require maximisation).
+
+```{r include=FALSE}
+lm_mod <- 
+"// Simple Linear Model
+#include <TMB.hpp>
+
+template<class Type>
+Type objective_function<Type>::operator() ()
+{
+  // The data to be input
+  DATA_VECTOR(Y);	   // Response vector
+  DATA_MATRIX(X);	   // Design matrix
+
+  // The model parameters
+  PARAMETER_VECTOR(Beta);  // Vector of our 3 beta values
+  PARAMETER(logsig);       // natural log of the residual sd
+  
+  // this time we define nll to be a vector of length the same as our data vector Y
+  vector<Type> nll(Y.size());
+
+  // pre-caclulate the matrix multiplication of X and Beta
+  vector<Type> XB = X * Beta;
+
+  // and loop through each observation
+  for (int i = 0; i < X.rows(); i++) {
+    nll(i) = -dnorm(Y(i), XB(i), exp(logsig), true);
+  }
+
+  return nll.sum(); // return the sum of our vector
+
+}"
+write(lm_mod, file = "lm_mod.cpp")
+```
+
+Take note of some of the coding syntax within the above. Accessing a matrix element is given by `m(i, j)` or vector element by `v(i)`. For a particular row (or column) of a matrix we have `m.row(i)` or `m.col(i)`. The number of elements of a vector, matrix or array is `object.size()` while we sum the elements of an object with `object.sum()`. For matrix multiplication we simply use `*` rather than `%*%` in R - the nature of the objects will determine how this works.
+
+### Compiling the template and dynamically link the C++ code
+
+Once we have the template file in our working directory we simply load TMB and run the compile function.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(TMB)
+compile("lm_mod.cpp")
+```
+
+This creates a `.dll` file (in windows, or a `.so` in Linux.. something else again in Mac OS? - only mentioned as it can cause issues when sending jobs to an operating system different to that which you have compiled on). This needs to be linked and loaded before creating an automatically differentiated (AD) function. Once created subsequent modelling will not require running `compile()` again.
+
+```{r}
+dyn.load(dynlib("lm_mod"))
+```
+
+### Fit the Model
+
+Next we create the AD function - providing a list of data and parameter start values
+
+```{r}
+obj <- MakeADFun(data = list(Y = Y, X = X),
+  parameters = list(Beta = rep(0, dim(X)[2]), logsig = 0),
+  DLL = "lm_mod",
+  silent = TRUE
+)
+```
+
+And then perform the optimisation using any of R's generic functionality, such as `optim()` or `nlminb()`
+
+```{r}
+res <- optim(par = obj$par, fn = obj$fn, gr = obj$gr, method = "BFGS")
+```
+
+This list of results contains raw optimisation info, however we can obtain ML estimates and standard errors via
+
+```{r}
+sdreport(obj)
+```
+
+for comparison, the results of our `lm()` fit
+
+```{r}
+summary(lm(Y ~ X - 1))
+```
+
+## Example 2 - lmer()
+
+That was fun, but what we really want to be able to do is extend models with random effects and latent variables in weird and wonderful ways. The real magic of TMB is that it can automatically approximate marginal distributions with a Laplace approximation. All you have to do is specify the joint log likelihood, and tell TMB which parameters are random, and you're off and running.
+
+We'll start with a basic random intercept model, and then you can build on that to do what you desire. Let's simulate some data:
+
+```{r}
+# Add a 4 level factor to the data
+dat <- as.data.frame(cbind(X, X3 = rep(1:4, length.out = dim(X)[1])))
+dat$X3 <- factor(dat$X3)
+
+# Add random amounts to the response within each factor level
+dat$Y <- NULL
+for (i in levels(dat$X3)) {
+  dat$Y[dat$X3 == i] <- Y[dat$X3 == i] + rnorm(1)
+}
+
+```
+
+We will need to change out .cpp file a bit. The complete (joint) log likelihood will have one part for the observations, and another part for the random effects, which we call `u`, and will have to declare as a `PARAMETER_VECTOR`. For this model they are both Gaussian. We just add them up to get the complete log likelihood.
+
+```{r engine = 'Rcpp', eval = FALSE}
+// Simple Random Intercept Model
+#include <TMB.hpp>
+
+template<class Type>
+Type objective_function<Type>::operator() ()
+{
+  // Data to be input
+  DATA_IVECTOR(X3);        // The factor for which we require random intercepts
+  DATA_VECTOR(Y);          // Response vector
+  DATA_MATRIX(X);          // Design matrix
+
+  // Parameters
+  PARAMETER_VECTOR(Beta);  // Vector of our 3 beta values
+  PARAMETER_VECTOR(u);     // Intercept for given X3
+  PARAMETER(logsig1);      // Random effect sd
+  PARAMETER(logsig0);      // Residual sd
+
+  int nobs = X.rows();     // define the number of observations
+  int ngroups = u.size();  // define the number of factor levels i.e. random intercepts
+  Type nll = 0.0;         // initialize negative log likelihood
+
+  Type zero = 0.0;         // a constant
+  int k;                   // will act as a loop control variable
+
+  // Component 2 - Prior: intercept_j ~ N(0,sig1)
+  for(int j = 0; j < ngroups; j++){
+    nll -= dnorm(u(j), zero, exp(logsig1), true);
+  }
+
+  // Component 1 -  Observations: x_i|u ~ N(XBeta + u, sig0) */
+  vector<Type> XB = X * Beta; // pre-calculate the design matrix times beta vector
+
+  for(int i = 0; i < nobs; i++){
+    k = X3(i) - 1;          // set the LCV to reflect the factor level of the observations
+    nll -= dnorm(Y(i), XB(i) + u(k), exp(logsig0), true);
+  }
+
+  return nll;
+}
+```
+
+```{r include=FALSE}
+ranint_mod <- 
+"#include <TMB.hpp>
+
+template<class Type>
+Type objective_function<Type>::operator() ()
+{
+  // Data to be input
+  DATA_IVECTOR(X3);        // The factor for which we require random intercepts
+  DATA_VECTOR(Y);          // Response vector
+  DATA_MATRIX(X);          // Design matrix
+
+  // Parameters
+  PARAMETER_VECTOR(Beta);  // Vector of our 3 beta values
+  PARAMETER_VECTOR(u);     // Intercept for given X3
+  PARAMETER(logsig1);      // Random effect sd
+  PARAMETER(logsig0);      // Residual sd
+
+  int nobs = X.rows();     // define the number of observations
+  int ngroups = u.size();  // define the number of factor levels i.e. random intercepts
+  Type nll = 0.0;         // initialize negative log likelihood
+
+  Type zero = 0.0;         // a constant
+  int k;                   // will act as a loop control variable
+
+  // Component 2 - Prior: intercept_j ~ N(0,sig1)
+  for(int j = 0; j < ngroups; j++){
+    nll -= dnorm(u(j), zero, exp(logsig1), true);
+  }
+
+  // Component 1 -  Observations: x_i|u ~ N(XBeta + u, sig0) */
+  vector<Type> XB = X * Beta; // pre-calculate the design matrix times beta vector
+
+  for(int i = 0; i < nobs; i++){
+    k = X3(i) - 1;          // set the LCV to reflect the factor level of the observations
+    nll -= dnorm(Y(i), XB(i) + u(k), exp(logsig0), true);
+  }
+
+  return nll;
+}"
+write(ranint_mod, file = "lmer_mod.cpp")
+```
+
+Then we just compile and load the file, like before.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+compile("lmer_mod.cpp") 
+dyn.load("lmer_mod") 
+
+# Create the objective function - setting 'u' to be random
+ni=length(levels(dat$X3))
+k=length(true.beta)
+obj <- MakeADFun(data = list(X3 = as.numeric(dat$X3), Y = dat$Y, 
+                             X = as.matrix(dat[ , c("Int", "X1", "X2")])),
+                 parameters = list(Beta = rep(0, k), 
+                                   u = rep(0, ni), 
+                                   logsig1 = 0, logsig0 = 0),
+                 random = "u",  ##u are random effects, will be integrated out w. Laplace
+                 DLL = "lmer_mod",
+                 silent = TRUE
+)
+
+
+```
+
+Now we just run the optimisation. Laplace will be used to integrate the likelihood over the random effects, and the marginal likelihood will be maximised.
+
+```{r}
+res <- optim(par = obj$par, fn = obj$fn, gr = obj$gr, method = "BFGS", 
+             control = list(maxit = 1000), hessian = T)
+sdreport(obj)
+```
+
+How does that compare to the `lmer()` function?
+
+```{r message=FALSE, warning=FALSE}
+library(lme4)
+ri.mod = lmer(Y ~ X1 + X2 + (1|X3), data = dat,REML = FALSE)
+summary(ri.mod)
+```
+
+If you would prefer to have `sigma` instead of `logsigma` you can add the following to your .cpp code
+
+```{r}
+# // procedures: (transformed parameters)
+# Type sigma1 = exp(logsig1);
+# Type sigma0 = exp(logsig0);
+# 
+# // reports on transformed parameters:
+# ADREPORT(sigma1)
+# ADREPORT(sigma0)
+```
+
+##Challanges
+
+1.  Estimate a binomial mixed model with a random intercept
+2.  Add a random slope
+3.  Estimate a Gompertz state space model, which can be written:
+
+$$y_t \sim N(U_t, \sigma^2_{obs})$$ $$U_t = a + b U_{t-1} + \epsilon_t $$ $$\epsilon_t \sim N(0, \sigma^2_{proc})$$
