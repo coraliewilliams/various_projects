@@ -48,6 +48,10 @@ graph LR
 
 ### 1. Varying slopes by construction
 
+> How should the robot pool information across intercepts and slopes? By modeling the joint population of intercepts and slopes, which means by modeling their covariance. In conventional multilevel models, the device that makes this possible is a joint multivariate Gaussian distribution for all of the varying effects, both intercepts and slopes. So instead of having two independent Gaussian distributions of intercepts and of slopes, the robot can do better by assigning a two-dimensional Gaussian distribution to both the intercepts (first dimension) and the slopes (second dimension). (p. 437)
+
+**Simulate the population: café waiting times**
+
 ```{r}
 library(brms)
 library(dplyr)
@@ -87,6 +91,15 @@ vary_effects <-
   set_names("a_cafe", "b_cafe")
 
 
+
+```
+
+
+
+**Simulate observations: café waiting times**
+
+```{r}
+
 #### Simulate observations 
 n_visits <- 10
 sigma    <-  0.5  # std dev within cafes
@@ -121,11 +134,45 @@ d %>%
   facet_wrap(~ cafe, ncol = 1)
 ```
 
+
+
+
+
+
+
+```{r}
+# Plot wait time of two cafés for each morning and afternoon from simulated data
+d %>%
+  mutate(afternoon = ifelse(afternoon == 0, "M", "A"),
+         day       = rep(rep(1:5, each = 2), times = n_cafes)) %>%
+  filter(cafe %in% c(3, 5)) %>%
+  mutate(cafe = str_c("café #", cafe)) %>% 
+  ggplot(aes(x = visit, y = wait, group = day)) +
+  geom_point(aes(color = afternoon), size = 2) +
+  geom_line(color = "#8B9DAF") +
+  scale_color_manual(values = c("#80A0C7", "#EEDA9D")) +
+  scale_x_continuous(NULL, breaks = 1:10, labels = rep(c("M", "A"), times = 5)) +
+  scale_y_continuous("wait time in minutes", limits = c(0, NA)) +
+  theme_pearl_earring(axis.ticks.x = element_blank(),
+                      legend.position = "none") +
+  facet_wrap(~ cafe, ncol = 1)
+```
+
+
+
+> In this exercise, we are simulating data from a generative process and then analyzing that data with a model that reflects exactly the correct structure of that process. But in the real world, we’re never so lucky. Instead we are always forced to analyze data with a model that is misspecified: The true data-generating process is different than the model. Simulation can be used however to explore misspecification. Just simulate data from a process and then see how a number of models, none of which match exactly the data-generating process, perform. And always remember that Bayesian inference does not depend upon data-generating assumptions, such as the likelihood, being true. (p. 441)
+
+
+
 ------------------------------------------------------------------------
 
-### 2. Advanced varying slopes: Household dyads dataset
+### 2. Advanced varying slopes: Prosocial chimpanzee
 
-Prosocial chimpanzee experiment
+When there is more than one type of cluster in the same model we will fit a multilevel model
+
+Prosocial chimpanzee experiment: - Outcome: Pulled left (Bernoulli) - 504 trials - 7 actors - 6 blocks - 4 treatment
+
+> The kind of data structure in data(chimpanzees) is usually called a cross-classified multilevel model. It is cross-classified, because actors are not nested within unique blocks. If each chimpanzee had instead done all of his or her pulls on a single day, within a single block, then the data structure would instead be hierarchical. However, the model specification would typically be the same. So the model structure and code you'll see below will apply both to cross-classified designs and hierarchical designs. (p. 415, emphasis in the original)
 
 ```{r}
 # Load chimpanzees prosocial experiement data
@@ -145,6 +192,148 @@ d <-
                             labels = c("r/n", "l/n", "r/p", "l/p")))
 
 glimpse(d)
+```
+
+The cross-classified model of prosocial chimpazees can be extended further with four population-level intercepts, $\gamma_1,...,\gamma_4$, one for each of the four levels of `treatment`. There are two higher-level grouping variables, `actor` and `block`, making this a cross-classified model.
+
+$$
+\begin{align*}\text{left_pull}_i & \sim \operatorname{Binomial}(n_i = 1, p_i) \\\operatorname{logit} (p_i) & = \gamma_{\text{treatment}[i]} + \alpha_{\text{actor}[i], \text{treatment}[i]} + \beta_{\text{block}[i], \text{treatment}[i]} \\\gamma_j & \sim \operatorname{Normal}(0, 1), \;\;\; \text{for } j = 1, \dots, 4 \\\begin{bmatrix} \alpha_{j, 1} \\ \alpha_{j, 2} \\ \alpha_{j, 3} \\ \alpha_{j, 4} \end{bmatrix} & \sim \operatorname{MVNormal} \begin{pmatrix} \begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \end{bmatrix}, \mathbf \Sigma_\text{actor} \end{pmatrix} \\\begin{bmatrix} \beta_{j, 1} \\ \beta_{j, 2} \\ \beta_{j, 3} \\ \beta_{j, 4} \end{bmatrix} & \sim \operatorname{MVNormal} \begin{pmatrix} \begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \end{bmatrix}, \mathbf \Sigma_\text{block} \end{pmatrix} \\\mathbf \Sigma_\text{actor} & = \mathbf{S_\alpha R_\alpha S_\alpha} \\\mathbf \Sigma_\text{block} & = \mathbf{S_\beta R_\beta S_\beta} \\\sigma_{\alpha, [1]}, \dots, \sigma_{\alpha, [4]} & \sim \operatorname{Exponential}(1) \\\sigma_{\beta, [1]}, \dots, \sigma_{\beta, [4]}   & \sim \operatorname{Exponential}(1) \\\mathbf R_\alpha & \sim \operatorname{LKJ}(2) \\\mathbf R_\beta  & \sim \operatorname{LKJ}(2).\end{align*}
+$$
+
+The term $\alpha_{actor[i],treatment[i]}$ is meant to convey that each of the `treatment` effects can vary by `actor`. The first line containing the $MVNormal(.)$ operator indicates the `actor`-level deviations from the population-level estimates for $\gamma_j$ follow the multivariate normal distribution where the four means are set to zero (i.e., they are deviations) and their spread around those zeros are controlled by $\sum_{actor}$. In the first line below the last line containing $MVNormal(.)$, we learn that $\sum_{actor}$ can be decomposed into two terms, $S_{\alpha}$ and $R_{\alpha}$. It may not yet be clear by the notation, but $S_{\alpha}$ is a $4×4$ matrix,
+
+$$
+\mathbf S_\alpha = \begin{bmatrix} \sigma_{\alpha, [1]} & 0 & 0 & 0 \\ 0 & \sigma_{\alpha, [2]} & 0 & 0 \\ 0 & 0 & \sigma_{\alpha, [3]} & 0 \\ 0 & 0 & 0 & \sigma_{\alpha, [4]} \end{bmatrix}.
+$$
+
+And similarly, $R_{\alpha}$ is a $4×4$ matrix,
+
+$$
+\mathbf R_\alpha = \begin{bmatrix} 1 & \rho_{\alpha, [1, 2]} & \rho_{\alpha, [1, 3]} & \rho_{\alpha, [1, 4]} \\ \rho_{\alpha, [2, 1]} & 1 & \rho_{\alpha, [2, 3]} & \rho_{\alpha, [2, 4]} \\ \rho_{\alpha, [3, 1]} & \rho_{\alpha, [3, 2]} & 1 & \rho_{\alpha, [3, 4]} \\ \rho_{\alpha, [4, 1]} & \rho_{\alpha, [4, 2]} & \rho_{\alpha, [4, 3]} & 1 \end{bmatrix}.
+$$
+
+Fit model in brms:
+
+```{r}
+# load library
+library(brms)
+library(dplyr)
+library(tidyverse)
+
+# Fit brms multilevel model of prosocial chimpanzees
+b14.3 <- 
+  brm(data = d, 
+      family = binomial,
+      pulled_left | trials(1) ~ 0 + treatment + (0 + treatment | actor) + (0 + treatment | block),
+      prior = c(prior(normal(0, 1), class = b),
+                prior(exponential(1), class = sd, group = actor),
+                prior(exponential(1), class = sd, group = block),
+                prior(lkj(2), class = cor, group = actor),
+                prior(lkj(2), class = cor, group = block)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,  
+      seed = 4387510,
+      file = "fits/b14.03")
+```
+
+Get trank plots to examine primary parameters:
+
+```{r}
+library(bayesplot)
+
+# give the parameters fancy names
+names <- 
+  c(str_c("treatment[", 1:4, "]"), 
+    str_c("sigma['actor[", 1:4, "]']"), 
+    str_c("sigma['block[", 1:4, "]']"), 
+    str_c("rho['actor:treatment[", c(1, 1:2, 1:3), ",", rep(2:4, times = 1:3), "]']"), 
+    str_c("rho['block:treatment[", c(1, 1:2, 1:3), ",", rep(2:4, times = 1:3), "]']"), 
+    "Chain")
+
+# wrangle
+as_draws_df(b14.3) %>% 
+  select(b_treatment1:`cor_block__treatment3__treatment4`, .chain) %>% 
+  set_names(names) %>% 
+  
+  # plot
+  mcmc_rank_overlay() +
+  scale_color_manual(values = c("#80A0C7", "#B1934A", "#A65141", "#EEDA9D")) +
+  scale_x_continuous(NULL, breaks = 0:4 * 1e3, labels = c(0, str_c(1:4, "K"))) +
+  coord_cartesian(ylim = c(30, NA)) +
+  ggtitle("McElreath would love this trank plot.") +
+  theme(legend.position = "bottom") +
+  facet_wrap(~ parameter, labeller = label_parsed, ncol = 4)
+```
+
+Like McElreath explained on page 450, our `b14.3` has 76 parameters:
+
+-   4 average `treatment` effects, as listed in the 'Population-Level Effects' section;
+
+-   7 ×× 4 = 28 varying effects on `actor`, as indicated in the '\~actor:treatment (Number of levels: 7)' header multiplied by the four levels of `treatment`;
+
+-   6 ×× 4 = 24 varying effects on `block`, as indicated in the '\~block:treatment (Number of levels: 6)' header multiplied by the four levels of `treatment`;
+
+-   8 standard deviations listed in the eight rows beginning with `sd(`; and
+
+-   12 free correlation parameters listed in the eight rows beginning with `cor(`.
+
+Compute the WAIC estimate.
+
+```{r}
+b14.3 <- add_criterion(b14.3, "waic")
+waic(b14.3)
+```
+
+Make checks of the posterior predictions of the model
+
+```{r}
+# for annotation
+text <-
+  distinct(d, labels) %>% 
+  mutate(actor = 1,
+         prop  = c(.07, .8, .08, .795))
+
+nd <-
+  d %>% 
+  distinct(actor, condition, labels, prosoc_left, treatment) %>% 
+  mutate(block = 5)
+
+# compute and wrangle the posterior predictions
+fitted(b14.3,
+       newdata = nd) %>% 
+  data.frame() %>% 
+  bind_cols(nd) %>% 
+  # add the empirical proportions
+  left_join(
+    d %>%
+      group_by(actor, treatment) %>%
+      mutate(proportion = mean(pulled_left)) %>% 
+      distinct(actor, treatment, proportion),
+    by = c("actor", "treatment")
+  ) %>% 
+  mutate(condition = factor(condition)) %>% 
+  
+  # plot!
+  ggplot(aes(x = labels)) +
+  geom_hline(yintercept = .5, color = "#E8DCCF", alpha = 1/2, linetype = 2) +
+  # empirical proportions
+  geom_line(aes(y = proportion, group = prosoc_left),
+            linewidth = 1/4, color = "#394165") +
+  geom_point(aes(y = proportion, shape = condition),
+             color = "#394165", fill = "#100F14", size = 2.5, show.legend = F) + 
+  # posterior predictions
+  geom_line(aes(y = Estimate, group = prosoc_left),
+            linewidth = 3/4, color = "#80A0C7") +
+  geom_pointrange(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5, shape = condition),
+                  color = "#80A0C7", fill = "#100F14", fatten = 8, linewidth = 1/3, show.legend = F) + 
+  # annotation for the conditions
+  geom_text(data = text,
+            aes(y = prop, label = labels), 
+            color = "#DCA258", family = "Courier", size = 3) +
+  scale_shape_manual(values = c(21, 19)) +
+  scale_x_discrete(NULL, breaks = NULL) +
+  scale_y_continuous("proportion left lever", breaks = 0:2 / 2, labels = c("0", ".5", "1")) +
+  labs(subtitle = "Posterior predictions, in light blue, against the raw data, in dark blue, for\nmodel b14.3, the cross-classified varying effects model.") +
+  facet_wrap(~ actor, nrow = 1, labeller = label_both)
 ```
 
 ------------------------------------------------------------------------
@@ -168,9 +357,36 @@ Household dyads:
 ```{r}
 # Load librairies
 library(rethinking)
+library(tidyverse)
 
 # Load dataset of household dyads
 data(KosterLeckie)
+
+# Overview of relationships between dyads
+kl_dyads %>% 
+  ggplot(aes(x = hidA, y = hidB, label = did)) +
+  geom_tile(aes(fill = did),
+            show.legend = F) +
+  geom_text(size = 2) +
+  geom_vline(xintercept = 0:24 + 0.5, color = "#394165", linewidth = 1/5) +
+  geom_hline(yintercept = 1:25 + 0.5, color = "#394165", linewidth = 1/5) +
+  scale_fill_gradient(low = "#DCA258", high = "#EEDA9D", limits = c(1, NA)) +
+  scale_x_continuous(breaks = 1:24) +
+  scale_y_continuous(breaks = 2:25) +
+  theme(axis.text = element_text(size = 9),
+        axis.ticks = element_blank())
+
+
+# Distribution of gifts (A to B; B to A)
+kl_dyads %>% 
+  ggplot(aes(x = giftsAB, y = giftsBA)) +
+  geom_hex(bins = 70) +
+  geom_abline(color = "#DCA258", linetype = 3) +
+  scale_fill_gradient(low = "#E7CDC2", high = "#A65141", limits = c(1, NA)) +
+  scale_x_continuous("gifts household A to household B", limits = c(0, 113)) +
+  scale_y_continuous("gifts from B to A", limits = c(0, 113)) +
+  ggtitle("Distribution of dyadic gifts") +
+  coord_equal()
 ```
 
 "The variables `hidA` and `hidB` tell us the household IDs in each dyad, and `did` is a unique dyad ID number" (p. 462). To get a sense of the interrelation among those three ID variables, we'll make a tile plot.
@@ -202,14 +418,95 @@ Notes:
 
 -   brms is not set up to allow covariances among distinct random effects with the same levels: https://github.com/ASKurz/Statistical_Rethinking_with_brms_ggplot2_and_the_tidyverse_2\_ed/issues/6
 
+------------------------------------------------------------------------
+
 ### 5. Continuous categories and the Gaussian process
 
 There is a way to apply the varying effects approach to continuous categories... The general approach is known as **Gaussian process regression**. This name is unfortunately wholly uninformative about what it is for and how it works.
 
-> Gaussian process models constitute a class of probabilistic statistical models in which a Gaussian Process (GP) is used to described the Bayesian "a prior" uncertainty about a latent function.
+> Gaussian process (GP) models constitute a class of probabilistic statistical models in which a Gaussian Process (GP) is used to described the Bayesian "a prior" uncertainty about a latent function.
 
-#### 
+Instead of conventional covariance matrix, use a kernel function.
 
-Resources/Links for Gaussian Processes:
+The kernel gives the covariance between any pair of points as a function of their distance. Distance can be difference, space, time... =\> **Continuous ordered categories**
 
-https://katbailey.github.io/post/gaussian-processes-for-dummies/
+A GP assumes that $p(f(x_1),\dots,f(x_N))$ is jointly Gaussian, with some mean $\mu(x)$ and covariance $\sum(x)$ given by\$ \sum\_{ij} = k(x_i, x_j)\$, where k is a positive definite kernel function.
+
+**Matrix of geographic distances**
+
+```{r}
+# load the distance matrix
+library(rethinking)
+data(islandsDistMatrix)
+
+# display (measured in thousands of km)
+d_mat <- islandsDistMatrix
+colnames(d_mat) <- c("Ml", "Ti", "SC", "Ya", "Fi", "Tr", "Ch", "Mn", "To", "Ha")
+
+# Visualise the values from distance matrix
+d_mat %>%
+  data.frame() %>% 
+  rownames_to_column("row") %>% 
+  gather(column, distance, -row) %>% 
+  mutate(column = factor(column, levels = colnames(d_mat)),
+         row    = factor(row,    levels = rownames(d_mat)) %>% fct_rev(),
+         label  = formatC(distance, format = 'f', digits = 2)) %>%
+  
+  ggplot(aes(x = column, y = row)) + 
+  geom_raster(aes(fill = distance)) + 
+  geom_text(aes(label = label),
+            size = 3, family = "Courier", color = "#100F14") +
+  scale_fill_gradient(low = "#FCF9F0", high = "#A65141") +
+  scale_x_discrete(NULL, position = "top", expand = c(0, 0)) +
+  scale_y_discrete(NULL, expand = c(0, 0)) +
+  theme(axis.ticks = element_blank())
+```
+
+#### Load primary data: Oceanic tools
+
+```{r}
+# load the ordinary data, now with coordinates
+data(Kline2) 
+
+d <- 
+  Kline2 %>%
+  mutate(society = 1:10)
+
+rm(Kline2)
+```
+
+The **brms** package is capable of handling a variety of Gaussian process models using the `gp()` function.
+
+The **brms::gp()** function takes a handful of arguments. The first and most important argument, ..., accepts the names of one or more predictors from the data. When fitting a spatial Gaussian process of this kind, we'll enter in the latitude and longitude data for each of levels of culture. This will be an important departure from the text. For his m14.8, McElreath directly entered in the **Dmat** distance matrix data into ulam(). In so doing, he defined **Dij**, the matrix of distances between each of the societies. When using brms, we instead estimate the distance matrix from the latitude and longitude variables.
+
+```{r}
+# fit model with GP in brms
+b14.8 <-
+  brm(data = d, 
+      family = poisson(link = "identity"),
+      bf(total_tools ~ exp(a) * population^b / g,
+         a ~ 1 + gp(lat_adj, lon2_adj, scale = FALSE),
+         b + g ~ 1,
+         nl = TRUE),
+      prior = c(prior(normal(0, 1), nlpar = a),
+                prior(exponential(1), nlpar = b, lb = 0),
+                prior(exponential(1), nlpar = g, lb = 0),
+                prior(inv_gamma(2.874624, 2.941204), class = lscale, coef = gplat_adjlon2_adj, nlpar = a),
+                prior(exponential(1), class = sdgp, coef = gplat_adjlon2_adj, nlpar = a)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 14,
+      sample_prior = T,
+      file = "fits/b14.08")
+
+
+# print output
+print(b14.8)
+```
+
+#### Resources/Links for Gaussian Processes:
+
+-   https://katbailey.github.io/post/gaussian-processes-for-dummies/
+
+-   https://github.com/grasool/Gaussian-Processes
+
+-   http://www.auai.org/uai2013/prints/papers/244.pdf
