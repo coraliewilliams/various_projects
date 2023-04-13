@@ -297,7 +297,7 @@ for (url in urls) {
 
 
 # Save results of occurrences of "Global" in higherGeography
-write_csv(results_global, "projects/testing/opentraits_datasets_global_count.csv")
+write_csv(results_global, "projects/testing/output/opentraits_datasets_global_count.csv")
 
 
 # Datasets to look into
