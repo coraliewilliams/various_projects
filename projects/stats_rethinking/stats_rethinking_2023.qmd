@@ -94,8 +94,6 @@ vary_effects <-
 
 ```
 
-
-
 **Simulate observations: café waiting times**
 
 ```{r}
@@ -134,12 +132,6 @@ d %>%
   facet_wrap(~ cafe, ncol = 1)
 ```
 
-
-
-
-
-
-
 ```{r}
 # Plot wait time of two cafés for each morning and afternoon from simulated data
 d %>%
@@ -158,11 +150,7 @@ d %>%
   facet_wrap(~ cafe, ncol = 1)
 ```
 
-
-
-> In this exercise, we are simulating data from a generative process and then analyzing that data with a model that reflects exactly the correct structure of that process. But in the real world, we’re never so lucky. Instead we are always forced to analyze data with a model that is misspecified: The true data-generating process is different than the model. Simulation can be used however to explore misspecification. Just simulate data from a process and then see how a number of models, none of which match exactly the data-generating process, perform. And always remember that Bayesian inference does not depend upon data-generating assumptions, such as the likelihood, being true. (p. 441)
-
-
+> In this exercise, we are simulating data from a generative process and then analyzing that data with a model that reflects exactly the correct structure of that process. But in the real world, we're never so lucky. Instead we are always forced to analyze data with a model that is misspecified: The true data-generating process is different than the model. Simulation can be used however to explore misspecification. Just simulate data from a process and then see how a number of models, none of which match exactly the data-generating process, perform. And always remember that Bayesian inference does not depend upon data-generating assumptions, such as the likelihood, being true. (p. 441)
 
 ------------------------------------------------------------------------
 
@@ -404,8 +392,14 @@ library(brms)
 model.dyad.brm.giftAB <- brm(giftsAB ~ 1 + (1|hidA) + (1|hidB) + (1|did), data=kl_dyads)
 
 
+
 # Model 2: gift B to A
-model.dyad.brm.giftBA <- brm(giftsBA ~ 1 + (1|hidA) + (1|hidB) + (1|did), data=kl_dyads)
+# 
+model.dyad.brm.giftBA <- brm(giftsBA ~ 1 + (1|hidA) + (1|hidB) + (1|p|did), data=kl_dyads)
+
+
+## add correlation between two 
+# (1|p|did)
 
 ```
 
@@ -419,10 +413,6 @@ Fit model in brms
 ```
 
 The `echo: false` option disables the printing of code (only output is displayed).
-
-
-
-
 
 **Dyads model in Rethinking package**
 
@@ -469,11 +459,6 @@ m14.7 <-
     chains = 4, cores = 4, iter = 2000
   )
 ```
-
-
-
-
-
 
 Notes:
 
